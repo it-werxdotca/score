@@ -1,47 +1,44 @@
 <?php
 
-namespace Drupal\score;
+  namespace Drupal\score;
 
-use Drupal\Core\Entity\EntityInterface;
-use Drupal\Core\Entity\EntityFieldManagerInterface;
-use Drupal\taxonomy\Entity\Term;
-
-/**
- * Service for calculating entity scores based on configuration.
- */
-class ScoreCalculatorService {
-
-  protected $entityFieldManager;
-  protected $configLoader;
+  use Drupal\Core\Entity\EntityInterface;
+  use Drupal\Core\Entity\EntityFieldManagerInterface;
+  use Drupal\taxonomy\Entity\Term;
 
   /**
-   * Constructor.
-   *
-   * @param \Drupal\score\ComponentConfigLoader $config_loader
-   *   The service that loads score definitions from files.
-   * @param \Drupal\Core\Entity\EntityFieldManagerInterface $entity_field_manager
-   *   Entity field manager.
+   * Service for detecting fields relevant to scoring configuration.
    */
-  public function __construct(ComponentConfigLoader $config_loader, EntityFieldManagerInterface $entity_field_manager) {
-    $this->configLoader = $config_loader;
-    $this->entityFieldManager = $entity_field_manager;
-  }
+  class FieldDetectorService {
 
-  /**
-   * Calculate scores for an entity based on configuration.
-   */
-  public function calculateScores(EntityInterface $entity): void {
-    // 🔹 Use file-based config loader
-    $score_definitions = $this->configLoader->getScoreDefinitions() ?? [];
+    protected $entityFieldManager;
+    protected $configLoader;
 
-    foreach ($score_definitions as $definition) {
-      if ($this->entityMatches($entity, $definition)) {
-        $score = $this->calculateScore($entity, $definition);
-        $this->setScore($entity, $definition['score_field'], $score);
+    /**
+     * Constructor.
+     *
+     * @param \Drupal\score\ComponentConfigLoader $config_loader
+     *   The service that loads score definitions from files.
+     * @param \Drupal\Core\Entity\EntityFieldManagerInterface $entity_field_manager
+     *   Entity field manager.
+     */
+    public function __construct(ComponentConfigLoader $config_loader, EntityFieldManagerInterface $entity_field_manager) {
+      $this->configLoader = $config_loader;
+      $this->entityFieldManager = $entity_field_manager;
+    }
+
+    /**
+     * Detect fields for scoring for an entity based on configuration.
+     */
+    public function calculateScores(EntityInterface $entity): void {
+      // Use file-based config loader
+      $score_definitions = $this->configLoader->getScoreDefinitions() ?? [];
+
+      foreach ($score_definitions as $definition) {
+        // Implementation here...
       }
     }
   }
-
   protected function entityMatches(EntityInterface $entity, array $definition): bool {
     $bundles = (array) ($definition['bundles'] ?? []);
     return $entity->getEntityTypeId() === ($definition['entity_type'] ?? '') &&

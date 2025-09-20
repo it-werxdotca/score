@@ -21,61 +21,66 @@ class ScoreCalculatorService {
   /**
    * Calculate scores for an entity based on config.
    */
-  public function calculateScores(EntityInterface $entity): void {
-    $config = $this->configFactory->get('score.settings');
-    $definitions = $config->get('score_definitions') ?? [];
-    \Drupal::logger('score')->notice('calculateScores() entity id: @id, bundle: @bundle, type: @type', [
-      '@id' => $entity->id(),
-      '@bundle' => $entity->bundle(),
-      '@type' => $entity->getEntityTypeId(),
-    ]);
-    $matched = FALSE;
-    foreach ($definitions as $definition) {
-      \Drupal::logger('score')->debug('Checking definition: @definition', [
-        '@definition' => print_r($definition, TRUE),
-      ]);
-      // Match entity_type and bundle
-      if (
-        ($entity->getEntityTypeId() === ($definition['entity_type'] ?? 'node')) &&
-        (in_array($entity->bundle(), $definition['bundles'] ?? []))
-      ) {
-        $score_field = $definition['final_score_field'] ?? 'field_final_score';
-        \Drupal::logger('score')->debug('Matched definition for entity @id, score field: @field', [
-          '@id' => $entity->id(),
-          '@field' => $score_field,
-        ]);
-        if (!$entity->hasField($score_field)) {
-          \Drupal::logger('score')->warning('Score field @field does not exist on entity @id', [
-            '@field' => $score_field,
-            '@id' => $entity->id(),
-          ]);
-          continue;
-        }
-        $score = $this->calculateScore($entity, $definition['components'] ?? [], $definition['decimal_places'] ?? 1);
-        \Drupal::logger('score')->notice('Setting score field @field to @score on entity @id', [
-          '@field' => $score_field,
-          '@score' => $score,
-          '@id' => $entity->id(),
-        ]);
-        $entity->set($score_field, $score);
-        $entity->save();
-        \Drupal::logger('score')->notice('Calculated score @score for entity @id (@bundle)', [
-          '@score' => $score,
-          '@id' => $entity->id(),
-          '@bundle' => $entity->bundle(),
-        ]);
-        $matched = TRUE;
-        break;
-      }
-    }
-    if (!$matched) {
-      \Drupal::logger('score')->notice('No scoring configuration found for entity @id (@bundle)', [
-        '@id' => $entity->id(),
-        '@bundle' => $entity->bundle(),
-      ]);
-    }
-  }
+public function calculateScores(EntityInterface $entity): void {
+     $config = $this->configFactory->get('score.settings');
+     $definitions = $config->get('score_definitions') ?? [];
+     \Drupal::logger('score')->notice('calculateScores() entity id: @id, bundle: @bundle, type: @type', [
+       '@id' => $entity->id(),
+       '@bundle' => $entity->bundle(),
+       '@type' => $entity->getEntityTypeId(),
+     ]);
+     $matched = FALSE;
 
+     foreach ($definitions as $definition) {
+       // Match entity_type and bundle.
+       if (
+         ($entity->getEntityTypeId() === ($definition['entity_type'] ?? 'node')) &&
+         (in_array($entity->bundle(), $definition['bundles'] ?? []))
+       ) {
+         $score_field = $definition['final_score_field'] ?? 'field_final_score';
+         \Drupal::logger('score')->debug('Matched definition for entity @id, score field: @field', [
+           '@id' => $entity->id(),
+           '@field' => $score_field,
+         ]);
+         if (!$entity->hasField($score_field)) {
+           \Drupal::logger('score')->warning('Score field @field does not exist on entity @id', [
+             '@field' => $score_field,
+             '@id' => $entity->id(),
+           ]);
+           continue;
+         }
+
+         $score = $this->calculateScore(
+           $entity,
+           $definition['components'] ?? [],
+           $definition['decimal_places'] ?? 1
+         );
+
+         \Drupal::logger('score')->notice('Setting score field @field to @score on entity @id', [
+           '@field' => $score_field,
+           '@score' => $score,
+           '@id' => $entity->id(),
+         ]);
+
+         $entity->set($score_field, $score);
+
+         \Drupal::logger('score')->notice('Calculated score @score for entity @id (@bundle)', [
+           '@score' => $score,
+           '@id' => $entity->id(),
+           '@bundle' => $entity->bundle(),
+         ]);
+         $matched = TRUE;
+         break;
+       }
+     }
+
+     if (!$matched) {
+       \Drupal::logger('score')->notice('No scoring configuration found for entity @id (@bundle)', [
+         '@id' => $entity->id(),
+         '@bundle' => $entity->bundle(),
+       ]);
+     }
+   }
   /**
    * Calculate score for an entity based on components.
    */
@@ -91,34 +96,17 @@ class ScoreCalculatorService {
     ]);
 
     foreach ($components as $i => $component) {
-      // Allow for numerator_field style as well
-      $has_field = !empty($component['field']) && $entity->hasField($component['field']);
-      $has_numerator = !empty($component['numerator_field']) && $entity->hasField($component['numerator_field']);
-      \Drupal::logger('score')->debug('Component @i: @component', [
-        '@i' => $i,
-        '@component' => print_r($component, TRUE),
-      ]);
-      if (!$has_field && !$has_numerator) {
-        \Drupal::logger('score')->warning('Component @i: Skipping, no field found on entity @id', [
-          '@i' => $i,
-          '@id' => $entity->id(),
-        ]);
-        continue;
-      }
-
-      $weight = isset($component['weight']) ? (float) $component['weight'] : 1.0;
-      $is_bonus = !empty($component['is_bonus']);
+      $weight = $component['weight'] ?? 1.0;
 
       $component_score = $this->calculateComponent($entity, $component);
 
-      \Drupal::logger('score')->notice('Component @i: Score @score (bonus: @bonus, weight: @weight)', [
+      \Drupal::logger('score')->notice('Component @i score: @score (weight: @weight)', [
         '@i' => $i,
         '@score' => $component_score,
-        '@bonus' => (int)$is_bonus,
         '@weight' => $weight,
       ]);
 
-      if ($is_bonus) {
+      if (!empty($component['is_bonus'])) {
         $bonus_total += $component_score;
       }
       else {
@@ -148,6 +136,48 @@ class ScoreCalculatorService {
   }
 
   /**
+   * Extract the value from a field in a robust way (handles most field types).
+   */
+   protected function getFieldValue(EntityInterface $entity, $field_name) {
+     if (!$entity->hasField($field_name)) {
+       \Drupal::logger('score')->warning('getFieldValue: Entity @id does not have field @field', [
+         '@id' => $entity->id(),
+         '@field' => $field_name,
+       ]);
+       return null;
+     }
+     $field = $entity->get($field_name);
+     if ($field->isEmpty()) {
+       \Drupal::logger('score')->debug('getFieldValue: Field @field on entity @id is empty', [
+         '@field' => $field_name,
+         '@id' => $entity->id(),
+       ]);
+       return null;
+     }
+     // Correct check for multiple value fields.
+     if ($field->getFieldDefinition()->getFieldStorageDefinition()->isMultiple()) {
+       $item = $field->first();
+       if ($item && isset($item->value)) {
+         return $item->value;
+       }
+       return null;
+     }
+     // Entity reference: get referenced entity ID or value
+     if ($field->getFieldDefinition()->getType() === 'entity_reference') {
+       $target = $field->entity;
+       // If you want the referenced entity, return $target
+       // If you want the target ID, use $field->target_id
+       return $field->target_id ?? null;
+     }
+     // Boolean fields
+     if ($field->getFieldDefinition()->getType() === 'boolean') {
+       return (int) $field->value;
+     }
+     // Numeric, text, list, etc.
+     return $field->value;
+   }
+
+  /**
    * Calculate individual component score.
    */
   protected function calculateComponent(EntityInterface $entity, array $component): float {
@@ -160,74 +190,72 @@ class ScoreCalculatorService {
 
     switch ($type) {
       case 'direct_percentage':
-        if (!$field_name || !$entity->hasField($field_name)) {
-          \Drupal::logger('score')->warning('direct_percentage: missing field @field', ['@field' => $field_name]);
+        $value = $this->getFieldValue($entity, $field_name);
+        \Drupal::logger('score')->notice('direct_percentage: extracted value @value from field @field', [
+          '@value' => $value,
+          '@field' => $field_name,
+        ]);
+        if ($value === null || $value === '') {
           return 0;
         }
-        $value = $entity->get($field_name)->value ?? 0;
-        \Drupal::logger('score')->debug('direct_percentage: value @value', ['@value' => $value]);
         return min(($value / 100) * 15, 15);
 
       case 'percentage_calculation':
-        $numerator = $entity->get($component['numerator_field'] ?? '')->value ?? 0;
-        $denominator = $entity->get($component['denominator_field'] ?? '')->value ?? 0;
-        \Drupal::logger('score')->debug('percentage_calculation: numerator @numerator, denominator @denominator', [
+        $numerator = $this->getFieldValue($entity, $component['numerator_field'] ?? '');
+        $denominator = $this->getFieldValue($entity, $component['denominator_field'] ?? '');
+        \Drupal::logger('score')->notice('percentage_calculation: numerator @numerator, denominator @denominator', [
           '@numerator' => $numerator,
           '@denominator' => $denominator,
         ]);
-        if ($denominator == 0) return 0;
+        if (empty($denominator) || $denominator == 0) return 0;
         $percentage = ($numerator / $denominator) * 100;
         return min(($percentage / 100) * 15, 15);
 
       case 'list_mapping':
-        if (!$field_name || !$entity->hasField($field_name)) {
-          \Drupal::logger('score')->warning('list_mapping: missing field @field', ['@field' => $field_name]);
-          return 0;
-        }
-        $value = $entity->get($field_name)->value ?? null;
+        $value = $this->getFieldValue($entity, $field_name);
         $mappings = $component['mappings'] ?? [];
-        \Drupal::logger('score')->debug('list_mapping: value @value, mappings @mappings', [
+        \Drupal::logger('score')->notice('list_mapping: value @value, mappings @mappings', [
           '@value' => $value,
           '@mappings' => print_r($mappings, TRUE),
         ]);
         return min($mappings[$value] ?? 0, 15);
 
       case 'capped_linear':
-        if (!$field_name || !$entity->hasField($field_name)) {
-          \Drupal::logger('score')->warning('capped_linear: missing field @field', ['@field' => $field_name]);
-          return 0;
-        }
-        $value = $entity->get($field_name)->value ?? 0;
+        $value = $this->getFieldValue($entity, $field_name);
         $max_value = $component['max_value'] ?? 25;
-        \Drupal::logger('score')->debug('capped_linear: value @value, max_value @max', [
+        \Drupal::logger('score')->notice('capped_linear: value @value, max_value @max', [
           '@value' => $value,
           '@max' => $max_value,
         ]);
+        if ($value === null || $value === '' || $max_value == 0) {
+          return 0;
+        }
         return ($value > $max_value ? $max_value : $value) / $max_value * 15;
 
       case 'taxonomy_field_value':
-        if (!$field_name || !$entity->hasField($field_name)) {
-          \Drupal::logger('score')->warning('taxonomy_field_value: missing field @field', ['@field' => $field_name]);
+        $term_id = $this->getFieldValue($entity, $field_name);
+        if (!$term_id) {
+          \Drupal::logger('score')->warning('taxonomy_field_value: missing or empty field @field', ['@field' => $field_name]);
           return 0;
         }
-        $term = $entity->get($field_name)->entity ?? null;
+        $term = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->load($term_id);
         if (!$term instanceof Term) {
           \Drupal::logger('score')->warning('taxonomy_field_value: term is not a Term object');
           return 0;
         }
         $taxonomy_field = $component['taxonomy_field'] ?? null;
         $taxonomy_value = $term->get($taxonomy_field)->value ?? 0;
-        \Drupal::logger('score')->debug('taxonomy_field_value: taxonomy_value @value', ['@value' => $taxonomy_value]);
+        \Drupal::logger('score')->notice('taxonomy_field_value: taxonomy_value @value', ['@value' => $taxonomy_value]);
         return min($taxonomy_value, 15);
 
       case 'boolean_points':
-        if (!$field_name || !$entity->hasField($field_name)) {
-          \Drupal::logger('score')->warning('boolean_points: missing field @field', ['@field' => $field_name]);
-          return 0;
-        }
-        $value = $entity->get($field_name)->value ?? 0;
-        \Drupal::logger('score')->debug('boolean_points: value @value', ['@value' => $value]);
-        return $value ? 15 : 0;
+        $value = $this->getFieldValue($entity, $field_name);
+        $points = $component['points'] ?? 5;
+        \Drupal::logger('score')->notice('boolean_points: value @value, points @points', [
+          '@value' => $value,
+          '@points' => $points,
+        ]);
+        return $value ? $points : 0;
 
       default:
         \Drupal::logger('score')->warning('Unknown component type: @type', ['@type' => $type]);

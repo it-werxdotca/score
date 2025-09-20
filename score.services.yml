@@ -6,3 +6,9 @@ services:
   score.field_detector:
     class: Drupal\score\FieldDetectorService
     arguments: ['@entity_field.manager', '@entity_type.bundle.info']
+
+  score.node_score_subscriber:
+    class: Drupal\score\EventSubscriber\NodeScoreSubscriber
+    arguments: ['@score.calculator']
+    tags:
+      - { name: event_subscriber }
