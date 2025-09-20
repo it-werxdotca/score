@@ -1,0 +1,20 @@
+{
+  "name": "drupal/score",
+  "description": "Provides a scoring system with configurable settings and recalculation tools.",
+  "type": "drupal-module",
+  "license": "GPL-2.0-or-later",
+  "require": {
+    "php": ">=8.1",
+    "drupal/core": "^11.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Drupal\\score\\": "src/"
+    }
+  },
+  "extra": {
+    "drupal": {
+      "version": "11.x"
+    }
+  }
+}

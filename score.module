@@ -1,0 +1,128 @@
+<?php
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\field\Entity\FieldConfig;
+
+/**
+ * Implements hook_entity_presave().
+ *
+ * Recalculate impact score for the single node being saved.
+ * Dynamically creates the score field if it does not exist on the bundle,
+ * and exports the field YAML to public://field_exports on creation (Drupal 10/11+).
+ */
+function score_entity_presave(EntityInterface $entity) {
+  // Only act on nodes.
+  if ($entity->getEntityTypeId() !== 'node') {
+    return;
+  }
+
+  $config = \Drupal::config('score.settings');
+  $score_definitions = $config->get('score_definitions') ?? [];
+
+  foreach ($score_definitions as $definition_id => $definition) {
+    // Make sure structure is present and matches node bundle.
+    if (
+      !empty($definition['entity_type']) &&
+      $definition['entity_type'] === 'node' &&
+      !empty($definition['bundles']) &&
+      in_array($entity->bundle(), (array) $definition['bundles'], TRUE)
+    ) {
+      $score_field = $definition['score_field'] ?? '';
+
+      $field_created = FALSE;
+
+      // --- BEGIN: DYNAMIC FIELD CREATION ---
+      if ($score_field && !$entity->hasField($score_field)) {
+        // Create field storage if it doesn't exist.
+        if (!FieldStorageConfig::loadByName('node', $score_field)) {
+          FieldStorageConfig::create([
+            'field_name' => $score_field,
+            'entity_type' => 'node',
+            'type' => !empty($definition['field_type']) ? $definition['field_type'] : 'decimal', // Default to decimal
+            'cardinality' => 1,
+            'translatable' => FALSE,
+          ])->save();
+          $field_created = TRUE;
+        }
+
+        // Create field config for this bundle if it doesn't exist.
+        if (!FieldConfig::loadByName('node', $entity->bundle(), $score_field)) {
+          FieldConfig::create([
+            'field_name' => $score_field,
+            'entity_type' => 'node',
+            'bundle' => $entity->bundle(),
+            'label' => !empty($definition['label']) ? $definition['label'] : ucfirst(str_replace('_', ' ', $score_field)),
+            'required' => FALSE,
+            'settings' => [],
+          ])->save();
+          $field_created = TRUE;
+        }
+
+        // Clear the field definition cache so the new field is available immediately.
+        \Drupal::service('entity_field.manager')->clearCachedFieldDefinitions();
+
+        // Optional: Notify admin if a new field was created.
+        if ($field_created) {
+          \Drupal::messenger()->addStatus(t('Score field %field has been created on bundle %bundle.', [
+            '%field' => $score_field,
+            '%bundle' => $entity->bundle(),
+          ]));
+
+          // --- EXPORT YAML TO FILE ON FIELD CREATION ---
+          $field_storage_config_name = "field.storage.node.$score_field";
+          $field_config_name = "field.field.node.{$entity->bundle()}.$score_field";
+          $config_storage = \Drupal::service('config.storage');
+
+          $field_storage_data = $config_storage->read($field_storage_config_name);
+          $field_config_data = $config_storage->read($field_config_name);
+
+          // Use the built-in YAML exporter service (Drupal 10/11+)
+          $yaml_exporter = \Drupal::service('config.exporter')->getYaml();
+
+          $export_dir = 'public://field_exports';
+          \Drupal::service('file_system')->prepareDirectory($export_dir, \Drupal\Core\File\FileSystemInterface::CREATE_DIRECTORY);
+
+          if ($field_storage_data) {
+            $yaml = $yaml_exporter->dump($field_storage_data);
+            file_put_contents($export_dir . "/$field_storage_config_name.yml", $yaml);
+          }
+          if ($field_config_data) {
+            $yaml = $yaml_exporter->dump($field_config_data);
+            file_put_contents($export_dir . "/$field_config_name.yml", $yaml);
+          }
+        }
+        // --- END EXPORT YAML ---
+      }
+      // --- END: DYNAMIC FIELD CREATION ---
+
+      // Only recalc if the entity actually has the configured score field.
+      if ($score_field && $entity->hasField($score_field)) {
+        // Calculate the score.
+        \Drupal::service('score.calculator')->calculateScores($entity);
+
+        // Show message to the user.
+        $field_def = $entity->getFieldDefinition($score_field);
+        $label = $field_def ? $field_def->getLabel() : $score_field;
+        $value = $entity->get($score_field)->value ?? 0.0;
+        $formatted = \Drupal::service('score.calculator')->formatScoreForDisplay((float) $value);
+
+        \Drupal::messenger()->addStatus(t('@label recalculated: @value', [
+          '@label' => $label,
+          '@value' => $formatted,
+        ]));
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_help().
+ */
+function score_help($route_name, $route_match) {
+  switch ($route_name) {
+    case 'help.page.score':
+      return '<h3>' . t('About') . '</h3>'
+        . '<p>' . t('The Score module provides a flexible scoring system. Configure scoring rules through the admin interface for any content type.') . '</p>';
+  }
+}

@@ -1,0 +1,38 @@
+score.admin:
+  path: '/admin/config/score'
+  defaults:
+    _controller: '\Drupal\score\Controller\ScoreAdminController::adminPage'
+    _title: 'Score Systems'
+  requirements:
+    _permission: 'administer site configuration'
+
+score.config:
+  path: '/admin/config/score/configure/{score_name}'
+  defaults:
+    _form: '\Drupal\score\Form\ScoreConfigForm'
+    _title: 'Configure Score System'
+  requirements:
+    _permission: 'administer site configuration'
+
+score.add:
+  path: '/admin/config/score/add'
+  defaults:
+    _form: '\Drupal\score\Form\ScoreConfigForm'
+    _title: 'Add Score System'
+  requirements:
+    _permission: 'administer site configuration'
+
+score.recalculate:
+    path: '/admin/config/score/recalculate/{score_name}'
+    defaults:
+      _controller: '\Drupal\score\Controller\ScoreAdminController::recalculateScoreSystem'
+    requirements:
+      _permission: 'administer site configuration'
+
+score.delete:
+    path: '/admin/config/score/delete/{score_name}'
+    defaults:
+      _controller: '\Drupal\score\Controller\ScoreAdminController::delete'
+      _title: 'Delete Score System'
+    requirements:
+      _permission: 'administer site configuration'

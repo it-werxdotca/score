@@ -1,0 +1,13 @@
+score.admin:
+  title: 'Score Systems'
+  description: 'Manage score systems'
+  parent: system.admin_config
+  route_name: score.admin
+  weight: 100
+
+score.add:
+  title: 'Add Score System'
+  description: 'Create a new score system'
+  parent: score.admin
+  route_name: score.add
+  weight: 10

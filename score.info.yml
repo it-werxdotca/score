@@ -1,0 +1,8 @@
+name: Score
+type: module
+description: 'Dynamic scoring system with auto-detected fields and UI configuration'
+core_version_requirement: ^10 || ^11
+package: Custom
+dependencies:
+  - drupal:field
+  - drupal:node
