@@ -8,8 +8,7 @@ use Drupal\field\Entity\FieldConfig;
  * Implements hook_entity_presave().
  *
  * Recalculate impact score for the single node being saved.
- * Dynamically creates the score field if it does not exist on the bundle,
- * and exports the field YAML to public://field_exports on creation (Drupal 10/11+).
+ * Dynamically creates the score field if it does not exist on the bundle.
  */
 function score_entity_presave(EntityInterface $entity) {
   // Only act on nodes.
@@ -28,7 +27,8 @@ function score_entity_presave(EntityInterface $entity) {
       !empty($definition['bundles']) &&
       in_array($entity->bundle(), (array) $definition['bundles'], TRUE)
     ) {
-      $score_field = $definition['score_field'] ?? '';
+      // Use the canonical service to get the score field name for this entity.
+      $score_field = \Drupal::service('score.calculator')->getFinalScoreField($entity);
 
       $field_created = FALSE;
 
@@ -68,31 +68,7 @@ function score_entity_presave(EntityInterface $entity) {
             '%field' => $score_field,
             '%bundle' => $entity->bundle(),
           ]));
-
-          // --- EXPORT YAML TO FILE ON FIELD CREATION ---
-          $field_storage_config_name = "field.storage.node.$score_field";
-          $field_config_name = "field.field.node.{$entity->bundle()}.$score_field";
-          $config_storage = \Drupal::service('config.storage');
-
-          $field_storage_data = $config_storage->read($field_storage_config_name);
-          $field_config_data = $config_storage->read($field_config_name);
-
-          // Use the built-in YAML exporter service (Drupal 10/11+)
-          $yaml_exporter = \Drupal::service('config.exporter')->getYaml();
-
-          $export_dir = 'public://field_exports';
-          \Drupal::service('file_system')->prepareDirectory($export_dir, \Drupal\Core\File\FileSystemInterface::CREATE_DIRECTORY);
-
-          if ($field_storage_data) {
-            $yaml = $yaml_exporter->dump($field_storage_data);
-            file_put_contents($export_dir . "/$field_storage_config_name.yml", $yaml);
-          }
-          if ($field_config_data) {
-            $yaml = $yaml_exporter->dump($field_config_data);
-            file_put_contents($export_dir . "/$field_config_name.yml", $yaml);
-          }
         }
-        // --- END EXPORT YAML ---
       }
       // --- END: DYNAMIC FIELD CREATION ---
 
@@ -113,16 +89,5 @@ function score_entity_presave(EntityInterface $entity) {
         ]));
       }
     }
-  }
-}
-
-/**
- * Implements hook_help().
- */
-function score_help($route_name, $route_match) {
-  switch ($route_name) {
-    case 'help.page.score':
-      return '<h3>' . t('About') . '</h3>'
-        . '<p>' . t('The Score module provides a flexible scoring system. Configure scoring rules through the admin interface for any content type.') . '</p>';
   }
 }
