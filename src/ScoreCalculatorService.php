@@ -19,68 +19,85 @@ class ScoreCalculatorService {
   }
 
   /**
+   * Get the final score field name for an entity from config definitions.
+   */
+  public function getFinalScoreField(EntityInterface $entity): ?string {
+    $config = $this->configFactory->get('score.settings');
+    $definitions = $config->get('score_definitions') ?? [];
+    foreach ($definitions as $key => $definition) {
+      if (
+        ($entity->getEntityTypeId() === ($definition['entity_type'] ?? 'node')) &&
+        (in_array($entity->bundle(), $definition['bundles'] ?? []))
+      ) {
+        return $definition['final_score_field'] ?? 'field_final_score';
+      }
+    }
+    return null;
+  }
+
+  /**
    * Calculate scores for an entity based on config.
    */
-public function calculateScores(EntityInterface $entity): void {
-     $config = $this->configFactory->get('score.settings');
-     $definitions = $config->get('score_definitions') ?? [];
-     \Drupal::logger('score')->notice('calculateScores() entity id: @id, bundle: @bundle, type: @type', [
-       '@id' => $entity->id(),
-       '@bundle' => $entity->bundle(),
-       '@type' => $entity->getEntityTypeId(),
-     ]);
-     $matched = FALSE;
+  public function calculateScores(EntityInterface $entity): void {
+    $config = $this->configFactory->get('score.settings');
+    $definitions = $config->get('score_definitions') ?? [];
+    \Drupal::logger('score')->notice('calculateScores() entity id: @id, bundle: @bundle, type: @type', [
+      '@id' => $entity->id(),
+      '@bundle' => $entity->bundle(),
+      '@type' => $entity->getEntityTypeId(),
+    ]);
+    $matched = FALSE;
+    foreach ($definitions as $key => $definition) {
+      // Match entity_type and bundle.
+      if (
+        ($entity->getEntityTypeId() === ($definition['entity_type'] ?? 'node')) &&
+        (in_array($entity->bundle(), $definition['bundles'] ?? []))
+      ) {
+        $score_field = $definition['final_score_field'] ?? 'field_final_score';
+        \Drupal::logger('score')->debug('Matched definition for entity @id, score field: @field', [
+          '@id' => $entity->id(),
+          '@field' => $score_field,
+        ]);
+        if (!$entity->hasField($score_field)) {
+          \Drupal::logger('score')->warning('Score field @field does not exist on entity @id', [
+            '@field' => $score_field,
+            '@id' => $entity->id(),
+          ]);
+          continue;
+        }
 
-     foreach ($definitions as $definition) {
-       // Match entity_type and bundle.
-       if (
-         ($entity->getEntityTypeId() === ($definition['entity_type'] ?? 'node')) &&
-         (in_array($entity->bundle(), $definition['bundles'] ?? []))
-       ) {
-         $score_field = $definition['final_score_field'] ?? 'field_final_score';
-         \Drupal::logger('score')->debug('Matched definition for entity @id, score field: @field', [
-           '@id' => $entity->id(),
-           '@field' => $score_field,
-         ]);
-         if (!$entity->hasField($score_field)) {
-           \Drupal::logger('score')->warning('Score field @field does not exist on entity @id', [
-             '@field' => $score_field,
-             '@id' => $entity->id(),
-           ]);
-           continue;
-         }
+        $score = $this->calculateScore(
+          $entity,
+          $definition['components'] ?? [],
+          $definition['decimal_places'] ?? 1
+        );
 
-         $score = $this->calculateScore(
-           $entity,
-           $definition['components'] ?? [],
-           $definition['decimal_places'] ?? 1
-         );
+        \Drupal::logger('score')->notice('Setting score field @field to @score on entity @id', [
+          '@field' => $score_field,
+          '@score' => $score,
+          '@id' => $entity->id(),
+        ]);
 
-         \Drupal::logger('score')->notice('Setting score field @field to @score on entity @id', [
-           '@field' => $score_field,
-           '@score' => $score,
-           '@id' => $entity->id(),
-         ]);
+        $entity->set($score_field, $score);
 
-         $entity->set($score_field, $score);
+        \Drupal::logger('score')->notice('Calculated score @score for entity @id (@bundle)', [
+          '@score' => $score,
+          '@id' => $entity->id(),
+          '@bundle' => $entity->bundle(),
+        ]);
+        $matched = TRUE;
+        break;
+      }
+    }
 
-         \Drupal::logger('score')->notice('Calculated score @score for entity @id (@bundle)', [
-           '@score' => $score,
-           '@id' => $entity->id(),
-           '@bundle' => $entity->bundle(),
-         ]);
-         $matched = TRUE;
-         break;
-       }
-     }
+    if (!$matched) {
+      \Drupal::logger('score')->notice('No scoring configuration found for entity @id (@bundle)', [
+        '@id' => $entity->id(),
+        '@bundle' => $entity->bundle(),
+      ]);
+    }
+  }
 
-     if (!$matched) {
-       \Drupal::logger('score')->notice('No scoring configuration found for entity @id (@bundle)', [
-         '@id' => $entity->id(),
-         '@bundle' => $entity->bundle(),
-       ]);
-     }
-   }
   /**
    * Calculate score for an entity based on components.
    */
@@ -138,44 +155,44 @@ public function calculateScores(EntityInterface $entity): void {
   /**
    * Extract the value from a field in a robust way (handles most field types).
    */
-   protected function getFieldValue(EntityInterface $entity, $field_name) {
-     if (!$entity->hasField($field_name)) {
-       \Drupal::logger('score')->warning('getFieldValue: Entity @id does not have field @field', [
-         '@id' => $entity->id(),
-         '@field' => $field_name,
-       ]);
-       return null;
-     }
-     $field = $entity->get($field_name);
-     if ($field->isEmpty()) {
-       \Drupal::logger('score')->debug('getFieldValue: Field @field on entity @id is empty', [
-         '@field' => $field_name,
-         '@id' => $entity->id(),
-       ]);
-       return null;
-     }
-     // Correct check for multiple value fields.
-     if ($field->getFieldDefinition()->getFieldStorageDefinition()->isMultiple()) {
-       $item = $field->first();
-       if ($item && isset($item->value)) {
-         return $item->value;
-       }
-       return null;
-     }
-     // Entity reference: get referenced entity ID or value
-     if ($field->getFieldDefinition()->getType() === 'entity_reference') {
-       $target = $field->entity;
-       // If you want the referenced entity, return $target
-       // If you want the target ID, use $field->target_id
-       return $field->target_id ?? null;
-     }
-     // Boolean fields
-     if ($field->getFieldDefinition()->getType() === 'boolean') {
-       return (int) $field->value;
-     }
-     // Numeric, text, list, etc.
-     return $field->value;
-   }
+  protected function getFieldValue(EntityInterface $entity, $field_name) {
+    if (!$entity->hasField($field_name)) {
+      \Drupal::logger('score')->warning('getFieldValue: Entity @id does not have field @field', [
+        '@id' => $entity->id(),
+        '@field' => $field_name,
+      ]);
+      return null;
+    }
+    $field = $entity->get($field_name);
+    if ($field->isEmpty()) {
+      \Drupal::logger('score')->debug('getFieldValue: Field @field on entity @id is empty', [
+        '@field' => $field_name,
+        '@id' => $entity->id(),
+      ]);
+      return null;
+    }
+    // Correct check for multiple value fields.
+    if ($field->getFieldDefinition()->getFieldStorageDefinition()->isMultiple()) {
+      $item = $field->first();
+      if ($item && isset($item->value)) {
+        return $item->value;
+      }
+      return null;
+    }
+    // Entity reference: get referenced entity ID or value
+    if ($field->getFieldDefinition()->getType() === 'entity_reference') {
+      $target = $field->entity;
+      // If you want the referenced entity, return $target
+      // If you want the target ID, use $field->target_id
+      return $field->target_id ?? null;
+    }
+    // Boolean fields
+    if ($field->getFieldDefinition()->getType() === 'boolean') {
+      return (int) $field->value;
+    }
+    // Numeric, text, list, etc.
+    return $field->value;
+  }
 
   /**
    * Calculate individual component score.
@@ -266,51 +283,51 @@ public function calculateScores(EntityInterface $entity): void {
   /**
    * Recalculate all entities for a bundle.
    */
-public function recalculateScoreSystem(string $bundle): int {
-     $config = $this->configFactory->get('score.settings');
-     $definitions = $config->get('score_definitions') ?? [];
-     $count = 0;
-     \Drupal::logger('score')->notice('recalculateScoreSystem() called for bundle @bundle', [
-       '@bundle' => $bundle,
-     ]);
-     foreach ($definitions as $definition) {
-       \Drupal::logger('score')->debug('Checking definition: @definition', [
-         '@definition' => print_r($definition, TRUE),
-       ]);
-       if (!in_array($bundle, $definition['bundles'] ?? [])) {
-         \Drupal::logger('score')->debug('Bundle @bundle not in this definition', [
-           '@bundle' => $bundle,
-         ]);
-         continue;
-       }
-       $entity_type = $definition['entity_type'] ?? 'node';
-       $storage = \Drupal::entityTypeManager()->getStorage($entity_type);
-       $query = $storage->getQuery()->accessCheck(FALSE)->condition('type', $bundle);
-       $ids = $query->execute();
-       \Drupal::logger('score')->notice('Found @count entities for bundle @bundle', [
-         '@count' => count($ids),
-         '@bundle' => $bundle,
-       ]);
-       if ($ids) {
-         $entities = $storage->loadMultiple($ids);
-         foreach ($entities as $entity) {
-           // Reload the entity from storage to ensure all new fields are attached
-           $fresh_entity = \Drupal::entityTypeManager()
-             ->getStorage($entity->getEntityTypeId())
-             ->load($entity->id());
-           if ($fresh_entity) {
-             $this->calculateScores($fresh_entity);
-             $count++;
-           }
-         }
-       }
-     }
-     \Drupal::logger('score')->notice('Recalculation finished for bundle @bundle, total updated: @count', [
-       '@bundle' => $bundle,
-       '@count' => $count,
-     ]);
-     return $count;
-   }
+  public function recalculateScoreSystem(string $bundle): int {
+    $config = $this->configFactory->get('score.settings');
+    $definitions = $config->get('score_definitions') ?? [];
+    $count = 0;
+    \Drupal::logger('score')->notice('recalculateScoreSystem() called for bundle @bundle', [
+      '@bundle' => $bundle,
+    ]);
+    foreach ($definitions as $key => $definition) {
+      \Drupal::logger('score')->debug('Checking definition: @definition', [
+        '@definition' => print_r($definition, TRUE),
+      ]);
+      if (!in_array($bundle, $definition['bundles'] ?? [])) {
+        \Drupal::logger('score')->debug('Bundle @bundle not in this definition', [
+          '@bundle' => $bundle,
+        ]);
+        continue;
+      }
+      $entity_type = $definition['entity_type'] ?? 'node';
+      $storage = \Drupal::entityTypeManager()->getStorage($entity_type);
+      $query = $storage->getQuery()->accessCheck(FALSE)->condition('type', $bundle);
+      $ids = $query->execute();
+      \Drupal::logger('score')->notice('Found @count entities for bundle @bundle', [
+        '@count' => count($ids),
+        '@bundle' => $bundle,
+      ]);
+      if ($ids) {
+        $entities = $storage->loadMultiple($ids);
+        foreach ($entities as $entity) {
+          // Reload to ensure new fields are attached.
+          $fresh_entity = \Drupal::entityTypeManager()
+            ->getStorage($entity->getEntityTypeId())
+            ->load($entity->id());
+          if ($fresh_entity) {
+            $this->calculateScores($fresh_entity);
+            $count++;
+          }
+        }
+      }
+    }
+    \Drupal::logger('score')->notice('Recalculation finished for bundle @bundle, total updated: @count', [
+      '@bundle' => $bundle,
+      '@count' => $count,
+    ]);
+    return $count;
+  }
 
   /**
    * Format score for display.
