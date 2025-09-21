@@ -266,45 +266,51 @@ public function calculateScores(EntityInterface $entity): void {
   /**
    * Recalculate all entities for a bundle.
    */
-  public function recalculateScoreSystem(string $bundle): int {
-    $config = $this->configFactory->get('score.settings');
-    $definitions = $config->get('score_definitions') ?? [];
-    $count = 0;
-    \Drupal::logger('score')->notice('recalculateScoreSystem() called for bundle @bundle', [
-      '@bundle' => $bundle,
-    ]);
-    foreach ($definitions as $definition) {
-      \Drupal::logger('score')->debug('Checking definition: @definition', [
-        '@definition' => print_r($definition, TRUE),
-      ]);
-      if (!in_array($bundle, $definition['bundles'] ?? [])) {
-        \Drupal::logger('score')->debug('Bundle @bundle not in this definition', [
-          '@bundle' => $bundle,
-        ]);
-        continue;
-      }
-      $entity_type = $definition['entity_type'] ?? 'node';
-      $storage = \Drupal::entityTypeManager()->getStorage($entity_type);
-      $query = $storage->getQuery()->accessCheck(FALSE)->condition('type', $bundle);
-      $ids = $query->execute();
-      \Drupal::logger('score')->notice('Found @count entities for bundle @bundle', [
-        '@count' => count($ids),
-        '@bundle' => $bundle,
-      ]);
-      if ($ids) {
-        $entities = $storage->loadMultiple($ids);
-        foreach ($entities as $entity) {
-          $this->calculateScores($entity);
-          $count++;
-        }
-      }
-    }
-    \Drupal::logger('score')->notice('Recalculation finished for bundle @bundle, total updated: @count', [
-      '@bundle' => $bundle,
-      '@count' => $count,
-    ]);
-    return $count;
-  }
+public function recalculateScoreSystem(string $bundle): int {
+     $config = $this->configFactory->get('score.settings');
+     $definitions = $config->get('score_definitions') ?? [];
+     $count = 0;
+     \Drupal::logger('score')->notice('recalculateScoreSystem() called for bundle @bundle', [
+       '@bundle' => $bundle,
+     ]);
+     foreach ($definitions as $definition) {
+       \Drupal::logger('score')->debug('Checking definition: @definition', [
+         '@definition' => print_r($definition, TRUE),
+       ]);
+       if (!in_array($bundle, $definition['bundles'] ?? [])) {
+         \Drupal::logger('score')->debug('Bundle @bundle not in this definition', [
+           '@bundle' => $bundle,
+         ]);
+         continue;
+       }
+       $entity_type = $definition['entity_type'] ?? 'node';
+       $storage = \Drupal::entityTypeManager()->getStorage($entity_type);
+       $query = $storage->getQuery()->accessCheck(FALSE)->condition('type', $bundle);
+       $ids = $query->execute();
+       \Drupal::logger('score')->notice('Found @count entities for bundle @bundle', [
+         '@count' => count($ids),
+         '@bundle' => $bundle,
+       ]);
+       if ($ids) {
+         $entities = $storage->loadMultiple($ids);
+         foreach ($entities as $entity) {
+           // Reload the entity from storage to ensure all new fields are attached
+           $fresh_entity = \Drupal::entityTypeManager()
+             ->getStorage($entity->getEntityTypeId())
+             ->load($entity->id());
+           if ($fresh_entity) {
+             $this->calculateScores($fresh_entity);
+             $count++;
+           }
+         }
+       }
+     }
+     \Drupal::logger('score')->notice('Recalculation finished for bundle @bundle, total updated: @count', [
+       '@bundle' => $bundle,
+       '@count' => $count,
+     ]);
+     return $count;
+   }
 
   /**
    * Format score for display.
