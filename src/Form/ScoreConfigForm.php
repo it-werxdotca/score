@@ -6,10 +6,10 @@ use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
-use Drupal\Core\Language\LanguageManagerInterface;
-use Drupal\score\FieldDetectorService;
-use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\score\ScoreCalculatorService;
+use Drupal\score\FieldDetectorService;
+use Drupal\Core\Language\LanguageManagerInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Configuration form for score systems.
@@ -102,119 +102,102 @@ class ScoreConfigForm extends ConfigFormBase {
         '#type' => 'textfield',
         '#title' => $this->t('Final Score Field Label'),
         '#default_value' => $definition['final_score_field_label'] ?? 'Final Score',
-        '#description' => $this->t('Enter the label for the numeric field that will store the final score.'),
-        '#required' => TRUE,
       ];
+
       $form['field_wrapper']['final_score_field'] = [
         '#type' => 'machine_name',
         '#title' => $this->t('Final Score Field Machine Name'),
         '#default_value' => $definition['final_score_field'] ?? 'field_final_score',
         '#machine_name' => [
-          'source' => ['field_wrapper', 'final_score_field_label'],
-          'exists' => function ($machine_name) use ($first_bundle) {
-            $fields = \Drupal::service('entity_field.manager')->getFieldDefinitions('node', $first_bundle);
-            return isset($fields[$machine_name]);
-          },
-          'replace_pattern' => '[^a-z0-9_]+',
-          'callback' => 'strtolower',
+          'exists' => [$this->fieldDetector, 'scoreFieldExists'],
         ],
-        '#required' => TRUE,
       ];
 
-      // Components fieldset
+      // Max score and decimal places
+      $form['field_wrapper']['max_score'] = [
+        '#type' => 'number',
+        '#title' => $this->t('Maximum Score'),
+        '#default_value' => $definition['max_score'] ?? 100,
+        '#min' => 1,
+      ];
+
+      $form['field_wrapper']['decimal_places'] = [
+        '#type' => 'number',
+        '#title' => $this->t('Decimal Places'),
+        '#default_value' => $definition['decimal_places'] ?? 1,
+        '#min' => 0,
+        '#max' => 5,
+      ];
+
+      // Component fields
       $form['field_wrapper']['components'] = [
-        '#type' => 'fieldset',
-        '#title' => $this->t('Score components'),
-        '#tree' => TRUE,
+        '#type' => 'textarea',
+        '#title' => $this->t('Scoring Components (JSON)'),
+        '#description' => $this->t('Define the scoring components in JSON format.'),
+        '#default_value' => isset($definition['components']) ? json_encode($definition['components'], JSON_PRETTY_PRINT) : '',
       ];
-
-      $this->addComponentFields($form['field_wrapper']['components'], $first_bundle, $definition['components'] ?? []);
     }
-
-    // Max score and decimal places
-    $form['max_score'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Maximum score'),
-      '#default_value' => $definition['max_score'] ?? 100,
-      '#min' => 1,
-      '#step' => 1,
-    ];
-
-    $form['decimal_places'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Decimal places'),
-      '#default_value' => $definition['decimal_places'] ?? 1,
-      '#min' => 0,
-      '#max' => 5,
-      '#step' => 1,
-    ];
 
     return parent::buildForm($form, $form_state);
   }
 
-  public function updateFieldOptions(array &$form, FormStateInterface $form_state) {
-    return $form['field_wrapper'];
-  }
-
-  public function scoreNameExists(string $value): bool {
-    $config = $this->config('score.settings');
-    $score_definitions = $config->get('score_definitions') ?: [];
-    return isset($score_definitions[$value]);
-  }
-
   public function submitForm(array &$form, FormStateInterface $form_state): void {
-    $config = $this->config('score.settings');
-    $score_definitions = $config->get('score_definitions') ?: [];
+    parent::submitForm($form, $form_state);
 
     $score_name = $form_state->getValue('score_name');
     $selected_bundle = $form_state->getValue('bundles');
-    $first_bundle = $selected_bundle;
-
-    // These will now be present with #tree => TRUE!
     $final_score_field = $form_state->getValue(['field_wrapper', 'final_score_field']);
     $final_score_field_label = $form_state->getValue(['field_wrapper', 'final_score_field_label']);
+    $max_score = $form_state->getValue(['field_wrapper', 'max_score']);
+    $decimal_places = $form_state->getValue(['field_wrapper', 'decimal_places']);
+    $components_raw = $form_state->getValue(['field_wrapper', 'components']);
+
+    $components = [];
+    if (!empty($components_raw)) {
+      try {
+        $components = json_decode($components_raw, TRUE, 512, JSON_THROW_ON_ERROR);
+      } catch (\JsonException $e) {
+        $this->messenger()->addError($this->t('Error parsing components JSON: @error', ['@error' => (string) $e->getMessage()]));
+        return;
+      }
+    }
 
     // Ensure the field exists as a decimal numeric field.
     if ($final_score_field) {
-      $this->fieldDetector->createScoreField('node', $first_bundle, $final_score_field, 'decimal', [
+      $this->fieldDetector->createScoreField('node', $selected_bundle, $final_score_field, 'decimal', [
         'precision' => 10,
         'scale' => 2,
       ]);
     }
 
-    // Handle components
-    $components = $form_state->getValue(['field_wrapper', 'components']) ?? [];
-    foreach ($components as $key => &$component) {
-      if (!empty($component['mappings']) && is_string($component['mappings'])) {
-        $component['mappings'] = $this->mappingTextToArray($component['mappings']);
-      }
-    } unset($component);
+    $config = $this->config('score.settings');
+    $score_definitions = $config->get('score_definitions') ?: [];
 
     $definition = [
       'entity_type' => 'node',
       'bundles' => [$selected_bundle],
       'final_score_field_label' => $final_score_field_label,
       'final_score_field' => $final_score_field,
-      'max_score' => (int) $form_state->getValue('max_score'),
-      'decimal_places' => (int) $form_state->getValue('decimal_places'),
+      'max_score' => (int) $max_score,
+      'decimal_places' => (int) $decimal_places,
       'components' => $components,
     ];
 
     $score_definitions[$score_name] = $definition;
     $config->set('score_definitions', $score_definitions)->save();
 
-    $this->messenger()->addStatus($this->t('Score system @name has been saved.', ['@name' => $score_name]));
+    $this->messenger()->addStatus($this->t('Score system @name has been saved.', ['@name' => (string) $score_name]));
     $form_state->setRedirect('score.admin');
   }
 
- protected function addComponentFields(array &$form, string $bundle, array $existing_components): void {
+  protected function addComponentFields(array &$form, string $bundle, array $existing_components): void {
     // Number fields
     try {
       $number_fields = $this->fieldDetector->getFieldsForComponentType('node', $bundle, 'percentage_calculation');
       $number_field_options = $this->formatFieldOptions($number_fields ?? []);
     } catch (\Exception $e) {
       $number_field_options = [];
-      $this->messenger()->addWarning($this->t('Error loading number fields: @error', ['@error' => $e->getMessage()]));
+      $this->messenger()->addWarning($this->t('Error loading number fields: @error', ['@error' => (string) $e->getMessage()]));
     }
     // Taxonomy fields
     try {
@@ -247,99 +230,25 @@ class ScoreConfigForm extends ConfigFormBase {
     $form['percentage_calc']['weight'] = [
       '#type' => 'number',
       '#title' => $this->t('Weight'),
-      '#default_value' => (float) ($existing_components['percentage_calc']['weight'] ?? 1),
-      '#step' => 0.1,
+      '#default_value' => (string) ($existing_components['percentage_calc']['weight'] ?? '1'),
       '#min' => 0,
-      '#max' => 2,
+      '#step' => 0.01,
     ];
 
-    // Direct Percentage Component
-    $form['direct_percentage'] = [
-      '#type' => 'fieldset',
-      '#title' => $this->t('Direct Percentage'),
-      '#tree' => TRUE,
-    ];
-    $form['direct_percentage']['field'] = [
-      '#type' => 'select',
-      '#title' => $this->t('Percentage field'),
-      '#options' => $number_field_options,
-      '#default_value' => (string) ($existing_components['direct_percentage']['field'] ?? ''),
-      '#empty_option' => $this->t('- Select field -'),
-    ];
-    $form['direct_percentage']['weight'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Weight'),
-      '#default_value' => (float) ($existing_components['direct_percentage']['weight'] ?? 1),
-      '#step' => 0.1,
-      '#min' => 0,
-      '#max' => 2,
-    ];
-
-    // Taxonomy Score Component
-    $form['taxonomy_score'] = [
-      '#type' => 'fieldset',
-      '#title' => $this->t('Taxonomy Field Score'),
-      '#tree' => TRUE,
-    ];
-    $form['taxonomy_score']['field'] = [
-      '#type' => 'select',
-      '#title' => $this->t('Taxonomy reference field'),
-      '#options' => $taxonomy_field_options,
-      '#default_value' => (string) ($existing_components['taxonomy_score']['field'] ?? ''),
-      '#empty_option' => $this->t('- Select field -'),
-    ];
-    $form['taxonomy_score']['taxonomy_field'] = [
-      '#type' => 'textfield',
-      '#title' => $this->t('Score field name on taxonomy term (0-15 points)'),
-      '#default_value' => (string) ($existing_components['taxonomy_score']['taxonomy_field'] ?? 'field_score'),
-      '#description' => $this->t('Machine name of the field on taxonomy terms that contains score values (0-15)'),
-    ];
-    $form['taxonomy_score']['weight'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Weight'),
-      '#default_value' => (float) ($existing_components['taxonomy_score']['weight'] ?? 1.0),
-      '#min' => 0,
-      '#max' => 2,
-      '#step' => 0.1,
-    ];
-    $form['taxonomy_score']['is_bonus'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('Add as bonus points (not weighted)'),
-      '#default_value' => (bool) ($existing_components['taxonomy_score']['is_bonus'] ?? TRUE),
-      '#description' => $this->t('If checked, points are added directly. If unchecked, points are multiplied by weight.'),
-    ];
+    // Add similar logic for taxonomy fields if needed.
   }
 
   protected function formatFieldOptions(array $fields): array {
     $options = [];
-    foreach ($fields as $field_name => $field_info) {
-      $label = isset($field_info['label']) && !empty($field_info['label'])
-        ? (string) $field_info['label']
-        : (isset($field_info['type']) && !empty($field_info['type'])
-            ? ucfirst(str_replace('_', ' ', (string) $field_info['type']))
-            : ucfirst(str_replace('_', ' ', $field_name)));
-      $options[$field_name] = $label . ' (' . $field_name . ')';
+    foreach ($fields as $field_name => $label) {
+      $options[$field_name] = (string) $label;
     }
     return $options;
   }
 
-  protected function arrayToMappingText(array $mappings): string {
-    $lines = [];
-    foreach ($mappings as $key => $value) {
-      $lines[] = $key . '|' . $value;
-    }
-    return implode("\n", $lines);
-  }
-
-  protected function mappingTextToArray(string $text): array {
-    $mappings = [];
-    $lines = array_filter(array_map('trim', explode("\n", $text)));
-    foreach ($lines as $line) {
-      if (strpos($line, '|') !== FALSE) {
-        list($key, $value) = explode('|', $line, 2);
-        $mappings[trim($key)] = (int) trim($value);
-      }
-    }
-    return $mappings;
+  public function scoreNameExists($name) {
+    $config = $this->config('score.settings');
+    $score_definitions = $config->get('score_definitions') ?: [];
+    return isset($score_definitions[$name]);
   }
 }

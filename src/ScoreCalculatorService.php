@@ -15,7 +15,6 @@ class ScoreCalculatorService {
 
   public function __construct(ConfigFactoryInterface $config_factory) {
     $this->configFactory = $config_factory;
-    // Removed debug log.
   }
 
   /**
@@ -52,8 +51,8 @@ class ScoreCalculatorService {
         // Only retain warning log if score field is missing.
         if (!$entity->hasField($score_field)) {
           \Drupal::logger('score')->warning('Score field @field does not exist on entity @id', [
-            '@field' => $score_field,
-            '@id' => $entity->id(),
+            '@field' => (string) $score_field,
+            '@id' => (string) $entity->id(),
           ]);
           continue;
         }
@@ -72,8 +71,8 @@ class ScoreCalculatorService {
 
     if (!$matched) {
       \Drupal::logger('score')->warning('No scoring configuration found for entity @id (@bundle)', [
-        '@id' => $entity->id(),
-        '@bundle' => $entity->bundle(),
+        '@id' => (string) $entity->id(),
+        '@bundle' => (string) $entity->bundle(),
       ]);
     }
   }
@@ -114,8 +113,8 @@ class ScoreCalculatorService {
   protected function getFieldValue(EntityInterface $entity, $field_name) {
     if (!$entity->hasField($field_name)) {
       \Drupal::logger('score')->warning('getFieldValue: Entity @id does not have field @field', [
-        '@id' => $entity->id(),
-        '@field' => $field_name,
+        '@id' => (string) $entity->id(),
+        '@field' => (string) $field_name,
       ]);
       return null;
     }
@@ -184,7 +183,7 @@ class ScoreCalculatorService {
       case 'taxonomy_field_value':
         $term_id = $this->getFieldValue($entity, $field_name);
         if (!$term_id) {
-          \Drupal::logger('score')->warning('taxonomy_field_value: missing or empty field @field', ['@field' => $field_name]);
+          \Drupal::logger('score')->warning('taxonomy_field_value: missing or empty field @field', ['@field' => (string) $field_name]);
           return 0;
         }
         $term = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->load($term_id);
@@ -202,7 +201,7 @@ class ScoreCalculatorService {
         return $value ? $points : 0;
 
       default:
-        \Drupal::logger('score')->warning('Unknown component type: @type', ['@type' => $type]);
+        \Drupal::logger('score')->warning('Unknown component type: @type', ['@type' => (string) $type]);
         return 0;
     }
   }
@@ -212,7 +211,7 @@ class ScoreCalculatorService {
      $definitions = $config->get('score_definitions') ?? [];
      $count = 0;
      if (!isset($definitions[$score_system_name])) {
-         \Drupal::logger('score')->warning('No score definition for @name', ['@name' => $score_system_name]);
+         \Drupal::logger('score')->warning('No score definition for @name', ['@name' => (string) $score_system_name]);
          return 0;
      }
      $definition = $definitions[$score_system_name];
@@ -234,7 +233,6 @@ class ScoreCalculatorService {
              }
          }
      }
-     // Removed notice log for recalculation finished.
      return $count;
  }
 

@@ -7,9 +7,6 @@ use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\score\ScoreCalculatorService;
 
-/**
- * Admin controller for score systems.
- */
 class ScoreAdminController extends ControllerBase {
 
   /**
@@ -27,14 +24,12 @@ class ScoreAdminController extends ControllerBase {
    */
   public function __construct(ScoreCalculatorService $score_calculator) {
     $this->scoreCalculator = $score_calculator;
-    \Drupal::logger('score')->debug('ScoreAdminController::__construct called');
   }
 
   /**
    * {@inheritdoc}
    */
   public static function create(ContainerInterface $container) {
-    \Drupal::logger('score')->debug('ScoreAdminController::create called');
     return new static(
       $container->get('score.calculator')
     );
@@ -44,10 +39,8 @@ class ScoreAdminController extends ControllerBase {
    * Admin page listing all score systems.
    */
   public function adminPage() {
-    \Drupal::logger('score')->notice('adminPage() called');
     $config = $this->config('score.settings');
     $score_definitions = $config->get('score_definitions') ?: [];
-    \Drupal::logger('score')->notice('Loaded @count score definitions', ['@count' => count($score_definitions)]);
 
     $header = [
       'name' => $this->t('Score System'),
@@ -56,8 +49,6 @@ class ScoreAdminController extends ControllerBase {
 
     $rows = [];
     foreach ($score_definitions as $name => $definition) {
-      \Drupal::logger('score')->notice('Building row for score system: @name', ['@name' => $name]);
-
       $operations = [
         'configure' => [
           'title' => $this->t('Configure'),
@@ -102,7 +93,6 @@ class ScoreAdminController extends ControllerBase {
     ];
 
     $build['#title'] = $this->t('Score Systems Administration');
-    \Drupal::logger('score')->notice('adminPage() returning render array');
     return $build;
   }
 
@@ -113,19 +103,17 @@ class ScoreAdminController extends ControllerBase {
    *   The score system name.
    */
   public function delete($score_name) {
-    \Drupal::logger('score')->notice('delete() called for @score_name', ['@score_name' => $score_name]);
-    $config = \Drupal::configFactory()->getEditable('score.settings');
+    $config = $this->config('score.settings');
     $score_definitions = $config->get('score_definitions') ?: [];
 
     if (isset($score_definitions[$score_name])) {
-      \Drupal::logger('score')->notice('Deleting score system: @score_name', ['@score_name' => $score_name]);
       unset($score_definitions[$score_name]);
       $config->set('score_definitions', $score_definitions)->save();
-      $this->messenger()->addStatus($this->t('Score system @name has been deleted.', ['@name' => $score_name]));
+      $this->messenger()->addStatus($this->t('Score system @name has been deleted.', ['@name' => (string) $score_name]));
     }
     else {
       \Drupal::logger('score')->warning('Attempted to delete non-existent score system: @score_name', ['@score_name' => $score_name]);
-      $this->messenger()->addWarning($this->t('Score system @name does not exist.', ['@name' => $score_name]));
+      $this->messenger()->addWarning($this->t('Score system @name does not exist.', ['@name' => (string) $score_name]));
     }
 
     return $this->redirect('score.admin');
@@ -138,44 +126,26 @@ class ScoreAdminController extends ControllerBase {
    *   The score system name.
    */
   public function recalculateScoreSystem($score_name) {
-    \Drupal::logger('score')->notice('Route reached for @score', ['@score' => $score_name]);
     $config = $this->config('score.settings');
     $score_definitions = $config->get('score_definitions') ?: [];
-    \Drupal::logger('score')->notice('Loaded @count score definitions', ['@count' => count($score_definitions)]);
 
     if (!isset($score_definitions[$score_name])) {
       \Drupal::logger('score')->warning('Score system @name does not exist.', ['@name' => $score_name]);
-      $this->messenger()->addWarning($this->t('Score system @name does not exist.', ['@name' => $score_name]));
+      $this->messenger()->addWarning($this->t('Score system @name does not exist.', ['@name' => (string) $score_name]));
       return $this->redirect('score.admin');
     }
 
     $definition = $score_definitions[$score_name];
-    \Drupal::logger('score')->notice('Score definition loaded for @score_name: @definition', [
-      '@score_name' => $score_name,
-      '@definition' => print_r($definition, TRUE),
-    ]);
 
     // Check if the final_score_field exists on the content type
     $field_detector = \Drupal::service('score.field_detector');
     $bundles = (array) $definition['bundles'];
     $score_field_exists = FALSE;
     $final_score_field = $definition['final_score_field'] ?? '';
-    \Drupal::logger('score')->notice('Checking for score field @field on bundles: @bundles', [
-      '@field' => $final_score_field,
-      '@bundles' => implode(', ', $bundles),
-    ]);
     foreach ($bundles as $bundle) {
       $fields = $field_detector->getScoreFields('node', $bundle);
-      \Drupal::logger('score')->notice('Fields for bundle @bundle: @fields', [
-        '@bundle' => $bundle,
-        '@fields' => implode(', ', array_keys($fields)),
-      ]);
       if (isset($fields[$final_score_field])) {
         $score_field_exists = TRUE;
-        \Drupal::logger('score')->notice('Score field @field exists on bundle @bundle', [
-          '@field' => $final_score_field,
-          '@bundle' => $bundle,
-        ]);
         break;
       }
     }
@@ -191,24 +161,17 @@ class ScoreAdminController extends ControllerBase {
       return $this->redirect('score.admin');
     }
 
-    \Drupal::logger('score')->notice('Invoking recalculateScoreSystem on ScoreCalculatorService for @score_name', [
-      '@score_name' => $score_name,
-    ]);
-    $count = $this->scoreCalculator->recalculateScoreSystem($score_name);
+    // Recalculate scores (calls ScoreCalculatorService)
+    $updated = $this->scoreCalculator->recalculateScoreSystem($score_name);
 
-    \Drupal::logger('score')->notice('Recalculate complete for @score_name: @count entities updated', [
-      '@score_name' => $score_name,
-      '@count' => $count,
-    ]);
-
-    $this->messenger()->addStatus(
-      $this->t('Score system @name has been recalculated for @count entities.', [
-        '@name' => $score_name,
-        '@count' => $count,
-      ])
-    );
+    $this->messenger()->addStatus($this->t(
+      'Recalculated scores for @name. Updated @count nodes.',
+      [
+        '@name' => (string) $score_name,
+        '@count' => (string) $updated,
+      ]
+    ));
 
     return $this->redirect('score.admin');
   }
-
 }
