@@ -15,7 +15,7 @@ class ScoreCalculatorService {
 
   public function __construct(ConfigFactoryInterface $config_factory) {
     $this->configFactory = $config_factory;
-    \Drupal::logger('score')->debug('ScoreCalculatorService::__construct called');
+    // Removed debug log.
   }
 
   /**
@@ -41,11 +41,6 @@ class ScoreCalculatorService {
   public function calculateScores(EntityInterface $entity): void {
     $config = $this->configFactory->get('score.settings');
     $definitions = $config->get('score_definitions') ?? [];
-    \Drupal::logger('score')->notice('calculateScores() entity id: @id, bundle: @bundle, type: @type', [
-      '@id' => $entity->id(),
-      '@bundle' => $entity->bundle(),
-      '@type' => $entity->getEntityTypeId(),
-    ]);
     $matched = FALSE;
     foreach ($definitions as $key => $definition) {
       // Match entity_type and bundle.
@@ -54,10 +49,7 @@ class ScoreCalculatorService {
         (in_array($entity->bundle(), $definition['bundles'] ?? []))
       ) {
         $score_field = $definition['final_score_field'] ?? 'field_final_score';
-        \Drupal::logger('score')->debug('Matched definition for entity @id, score field: @field', [
-          '@id' => $entity->id(),
-          '@field' => $score_field,
-        ]);
+        // Only retain warning log if score field is missing.
         if (!$entity->hasField($score_field)) {
           \Drupal::logger('score')->warning('Score field @field does not exist on entity @id', [
             '@field' => $score_field,
@@ -72,26 +64,14 @@ class ScoreCalculatorService {
           $definition['decimal_places'] ?? 1
         );
 
-        \Drupal::logger('score')->notice('Setting score field @field to @score on entity @id', [
-          '@field' => $score_field,
-          '@score' => $score,
-          '@id' => $entity->id(),
-        ]);
-
         $entity->set($score_field, $score);
-
-        \Drupal::logger('score')->notice('Calculated score @score for entity @id (@bundle)', [
-          '@score' => $score,
-          '@id' => $entity->id(),
-          '@bundle' => $entity->bundle(),
-        ]);
         $matched = TRUE;
         break;
       }
     }
 
     if (!$matched) {
-      \Drupal::logger('score')->notice('No scoring configuration found for entity @id (@bundle)', [
+      \Drupal::logger('score')->warning('No scoring configuration found for entity @id (@bundle)', [
         '@id' => $entity->id(),
         '@bundle' => $entity->bundle(),
       ]);
@@ -107,21 +87,9 @@ class ScoreCalculatorService {
     $total_weight = 0;
     $bonus_total = 0;
 
-    \Drupal::logger('score')->debug('calculateScore() on entity @id: components: @components', [
-      '@id' => $entity->id(),
-      '@components' => print_r($components, TRUE),
-    ]);
-
     foreach ($components as $i => $component) {
       $weight = $component['weight'] ?? 1.0;
-
       $component_score = $this->calculateComponent($entity, $component);
-
-      \Drupal::logger('score')->notice('Component @i score: @score (weight: @weight)', [
-        '@i' => $i,
-        '@score' => $component_score,
-        '@weight' => $weight,
-      ]);
 
       if (!empty($component['is_bonus'])) {
         $bonus_total += $component_score;
@@ -135,20 +103,8 @@ class ScoreCalculatorService {
     $weighted_avg = $total_weight ? ($weighted_total / $total_weight) : 0;
     $final_score = min($weighted_avg + $bonus_total, $max_points_per_component);
 
-    \Drupal::logger('score')->notice('Weighted total: @wt, Total weight: @tw, Bonus: @bt, Weighted average: @wa, Final: @fs', [
-      '@wt' => $weighted_total,
-      '@tw' => $total_weight,
-      '@bt' => $bonus_total,
-      '@wa' => $weighted_avg,
-      '@fs' => $final_score,
-    ]);
-
     $percentage = ($final_score / $max_points_per_component) * 100;
     $rounded = round($percentage, $decimal_places);
-    \Drupal::logger('score')->notice('Returning percentage @pct rounded @rounded', [
-      '@pct' => $percentage,
-      '@rounded' => $rounded,
-    ]);
     return $rounded;
   }
 
@@ -165,10 +121,6 @@ class ScoreCalculatorService {
     }
     $field = $entity->get($field_name);
     if ($field->isEmpty()) {
-      \Drupal::logger('score')->debug('getFieldValue: Field @field on entity @id is empty', [
-        '@field' => $field_name,
-        '@id' => $entity->id(),
-      ]);
       return null;
     }
     // Correct check for multiple value fields.
@@ -200,18 +152,10 @@ class ScoreCalculatorService {
   protected function calculateComponent(EntityInterface $entity, array $component): float {
     $type = $component['type'] ?? 'direct_percentage';
     $field_name = $component['field'] ?? null;
-    \Drupal::logger('score')->debug('calculateComponent() type: @type, field: @field', [
-      '@type' => $type,
-      '@field' => $field_name,
-    ]);
 
     switch ($type) {
       case 'direct_percentage':
         $value = $this->getFieldValue($entity, $field_name);
-        \Drupal::logger('score')->notice('direct_percentage: extracted value @value from field @field', [
-          '@value' => $value,
-          '@field' => $field_name,
-        ]);
         if ($value === null || $value === '') {
           return 0;
         }
@@ -220,10 +164,6 @@ class ScoreCalculatorService {
       case 'percentage_calculation':
         $numerator = $this->getFieldValue($entity, $component['numerator_field'] ?? '');
         $denominator = $this->getFieldValue($entity, $component['denominator_field'] ?? '');
-        \Drupal::logger('score')->notice('percentage_calculation: numerator @numerator, denominator @denominator', [
-          '@numerator' => $numerator,
-          '@denominator' => $denominator,
-        ]);
         if (empty($denominator) || $denominator == 0) return 0;
         $percentage = ($numerator / $denominator) * 100;
         return min(($percentage / 100) * 15, 15);
@@ -231,19 +171,11 @@ class ScoreCalculatorService {
       case 'list_mapping':
         $value = $this->getFieldValue($entity, $field_name);
         $mappings = $component['mappings'] ?? [];
-        \Drupal::logger('score')->notice('list_mapping: value @value, mappings @mappings', [
-          '@value' => $value,
-          '@mappings' => print_r($mappings, TRUE),
-        ]);
         return min($mappings[$value] ?? 0, 15);
 
       case 'capped_linear':
         $value = $this->getFieldValue($entity, $field_name);
         $max_value = $component['max_value'] ?? 25;
-        \Drupal::logger('score')->notice('capped_linear: value @value, max_value @max', [
-          '@value' => $value,
-          '@max' => $max_value,
-        ]);
         if ($value === null || $value === '' || $max_value == 0) {
           return 0;
         }
@@ -262,16 +194,11 @@ class ScoreCalculatorService {
         }
         $taxonomy_field = $component['taxonomy_field'] ?? null;
         $taxonomy_value = $term->get($taxonomy_field)->value ?? 0;
-        \Drupal::logger('score')->notice('taxonomy_field_value: taxonomy_value @value', ['@value' => $taxonomy_value]);
         return min($taxonomy_value, 15);
 
       case 'boolean_points':
         $value = $this->getFieldValue($entity, $field_name);
         $points = $component['points'] ?? 5;
-        \Drupal::logger('score')->notice('boolean_points: value @value, points @points', [
-          '@value' => $value,
-          '@points' => $points,
-        ]);
         return $value ? $points : 0;
 
       default:
@@ -307,10 +234,7 @@ class ScoreCalculatorService {
              }
          }
      }
-     \Drupal::logger('score')->notice('Recalculation finished for score system @name, total updated: @count', [
-         '@name' => $score_system_name,
-         '@count' => $count,
-     ]);
+     // Removed notice log for recalculation finished.
      return $count;
  }
 
