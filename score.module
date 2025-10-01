@@ -27,8 +27,7 @@ function score_entity_presave(EntityInterface $entity) {
       !empty($definition['bundles']) &&
       in_array($entity->bundle(), (array) $definition['bundles'], TRUE)
     ) {
-      // Use the canonical service to get the score field name for this entity.
-      $score_field = \Drupal::service('score.calculator')->getFinalScoreField($entity);
+      $score_field = $definition['score_field'] ?? '';
 
       $field_created = FALSE;
 
@@ -72,22 +71,22 @@ function score_entity_presave(EntityInterface $entity) {
       }
       // --- END: DYNAMIC FIELD CREATION ---
 
-      // Only recalc if the entity actually has the configured score field.
+      // Only recalc if the entity actually has the score field.
       if ($score_field && $entity->hasField($score_field)) {
-        // Calculate the score.
+        // Calculate and update the score.
         \Drupal::service('score.calculator')->calculateScores($entity);
-
-        // Show message to the user.
-        $field_def = $entity->getFieldDefinition($score_field);
-        $label = $field_def ? $field_def->getLabel() : $score_field;
-        $value = $entity->get($score_field)->value ?? 0.0;
-        $formatted = \Drupal::service('score.calculator')->formatScoreForDisplay((float) $value);
-
-        \Drupal::messenger()->addStatus(t('@label recalculated: @value', [
-          '@label' => $label,
-          '@value' => $formatted,
-        ]));
       }
     }
+  }
+}
+
+/**
+ * Implements hook_help().
+ */
+function score_help($route_name, $route_match) {
+  switch ($route_name) {
+    case 'help.page.score':
+      return '<h3>' . t('About') . '</h3>'
+        . '<p>' . t('The Score module provides a flexible scoring system. Configure scoring rules through the admin interface for any content type.') . '</p>';
   }
 }
